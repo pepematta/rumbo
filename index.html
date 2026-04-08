@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Mapa Vivo</title>
+<title>COMPAS</title>
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
 <style>
@@ -384,11 +384,11 @@
   #perm-status { font-size: 12px; color: var(--text-dim); min-height: 20px; }
 </style>
 </head>
-<body>
+<body class="light">
 
 <div id="permission-overlay">
-  <h1>Mapa Vivo</h1>
-  <p>Un mapa alineado con el mundo real.<br>Necesita brújula y ubicación.</p>
+  <h1>COMPAS</h1>
+  <p>Un mapa que te enseña a navegar.<br>Necesita brújula y ubicación.</p>
   <button class="btn" onclick="init()">Activar</button>
   <div id="perm-status"></div>
 </div>
@@ -419,7 +419,7 @@
 
 <div class="controls-right" style="display:none;" id="controls">
   <button class="ctrl-btn active" id="recenter-btn" onclick="toggleFollow()">◎</button>
-  <button class="ctrl-btn" id="theme-btn" onclick="toggleTheme()">☀︎</button>
+  <button class="ctrl-btn" id="theme-btn" onclick="toggleTheme()">☾</button>
 </div>
 
 <div id="search-panel" style="display:none;">
@@ -456,7 +456,7 @@ let destLat = null, destLng = null;
 let followMode = 'user'; // 'user' | 'midpoint' | 'free'
 let midpointZoom = null;
 let searchTimeout = null;
-let isLight = false;
+let isLight = true;
 
 const DARK_STYLE = 'https://tiles.openfreemap.org/styles/dark';
 const LIGHT_STYLE = 'https://tiles.openfreemap.org/styles/positron';
@@ -520,7 +520,7 @@ let isAnimating = false;
 function setupMap() {
   map = new maplibregl.Map({
     container: 'map',
-    style: DARK_STYLE,
+    style: LIGHT_STYLE,
     center: [userLng, userLat],
     zoom: 16,
     bearing: 0,
@@ -892,71 +892,77 @@ function clearDest() {
 // ═══════════════════════════════════════════
 //  THEME
 // ═══════════════════════════════════════════
+function restoreMapLayers(m, isNavMap) {
+  try {
+    if (!m.getSource('user-pos')) {
+      m.addSource('user-pos', {
+        type: 'geojson',
+        data: { type: 'Point', coordinates: [userLng, userLat] }
+      });
+    }
+    const dotRadius = isNavMap ? 6 : 7;
+    const glowRadius = isNavMap ? 16 : 20;
+    const strokeWidth = isNavMap ? 2 : 2.5;
+    if (!m.getLayer('user-glow')) {
+      m.addLayer({
+        id: 'user-glow', type: 'circle', source: 'user-pos',
+        paint: { 'circle-radius': glowRadius, 'circle-color': '#d4a054', 'circle-opacity': 0.15, 'circle-blur': 1 }
+      });
+    }
+    if (!m.getLayer('user-dot')) {
+      m.addLayer({
+        id: 'user-dot', type: 'circle', source: 'user-pos',
+        paint: { 'circle-radius': dotRadius, 'circle-color': '#d4a054', 'circle-stroke-color': '#fff', 'circle-stroke-width': strokeWidth }
+      });
+    }
+
+    const destData = destLat !== null
+      ? { type: 'Point', coordinates: [destLng, destLat] }
+      : { type: 'FeatureCollection', features: [] };
+    if (!m.getSource('dest-pos')) {
+      m.addSource('dest-pos', { type: 'geojson', data: destData });
+    } else {
+      m.getSource('dest-pos').setData(destData);
+    }
+    const destDotR = isNavMap ? 5 : 6;
+    const destGlowR = isNavMap ? 14 : 18;
+    if (!m.getLayer('dest-glow')) {
+      m.addLayer({
+        id: 'dest-glow', type: 'circle', source: 'dest-pos',
+        paint: { 'circle-radius': destGlowR, 'circle-color': '#e05040', 'circle-opacity': 0.15, 'circle-blur': 1 }
+      });
+    }
+    if (!m.getLayer('dest-dot')) {
+      m.addLayer({
+        id: 'dest-dot', type: 'circle', source: 'dest-pos',
+        paint: { 'circle-radius': destDotR, 'circle-color': '#e05040', 'circle-stroke-color': '#fff', 'circle-stroke-width': strokeWidth }
+      });
+    }
+
+    if (isNavMap) simplifyMapInstance(m);
+  } catch(e) {}
+}
+
+function applyStyleToMap(m, newStyle, isNavMap) {
+  const center = m.getCenter();
+  const zoom = m.getZoom();
+  const bearing = m.getBearing();
+  m.setStyle(newStyle);
+  m.once('idle', () => {
+    m.jumpTo({ center, zoom, bearing });
+    restoreMapLayers(m, isNavMap);
+  });
+}
+
 function toggleTheme() {
   isLight = !isLight;
   document.body.classList.toggle('light', isLight);
   document.getElementById('theme-btn').textContent = isLight ? '☾' : '☀︎';
 
-  const center = map.getCenter();
-  const zoom = map.getZoom();
-  const bearing = map.getBearing();
-  const wasNavigating = isNavigating;
-
-  map.setStyle(isLight ? LIGHT_STYLE : DARK_STYLE);
-
-  map.once('idle', () => {
-    map.jumpTo({ center, zoom, bearing });
-
-    try {
-      if (!map.getSource('user-pos')) {
-        map.addSource('user-pos', {
-          type: 'geojson',
-          data: { type: 'Point', coordinates: [userLng, userLat] }
-        });
-      }
-      if (!map.getLayer('user-glow')) {
-        map.addLayer({
-          id: 'user-glow', type: 'circle', source: 'user-pos',
-          paint: { 'circle-radius': 20, 'circle-color': '#d4a054', 'circle-opacity': 0.15, 'circle-blur': 1 }
-        });
-      }
-      if (!map.getLayer('user-dot')) {
-        map.addLayer({
-          id: 'user-dot', type: 'circle', source: 'user-pos',
-          paint: { 'circle-radius': 7, 'circle-color': '#d4a054', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2.5 }
-        });
-      }
-
-      const destData = destLat !== null
-        ? { type: 'Point', coordinates: [destLng, destLat] }
-        : { type: 'FeatureCollection', features: [] };
-      if (!map.getSource('dest-pos')) {
-        map.addSource('dest-pos', { type: 'geojson', data: destData });
-      } else {
-        map.getSource('dest-pos').setData(destData);
-      }
-      if (!map.getLayer('dest-glow')) {
-        map.addLayer({
-          id: 'dest-glow', type: 'circle', source: 'dest-pos',
-          paint: { 'circle-radius': 18, 'circle-color': '#e05040', 'circle-opacity': 0.15, 'circle-blur': 1 }
-        });
-      }
-      if (!map.getLayer('dest-dot')) {
-        map.addLayer({
-          id: 'dest-dot', type: 'circle', source: 'dest-pos',
-          paint: { 'circle-radius': 6, 'circle-color': '#e05040', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2.5 }
-        });
-      }
-    } catch(e) {}
-  });
-
-  // If navigating, recreate nav maps with new style
-  if (wasNavigating && destLat !== null) {
-    if (mapOverview) { mapOverview.remove(); mapOverview = null; }
-    if (mapLocal) { mapLocal.remove(); mapLocal = null; }
-    // Small delay to let containers clear
-    setTimeout(() => startTrip(), 300);
-  }
+  const newStyle = isLight ? LIGHT_STYLE : DARK_STYLE;
+  applyStyleToMap(map, newStyle, false);
+  if (mapOverview) applyStyleToMap(mapOverview, newStyle, true);
+  if (mapLocal) applyStyleToMap(mapLocal, newStyle, true);
 }
 
 // ═══════════════════════════════════════════
@@ -1076,36 +1082,7 @@ function startTrip() {
 }
 
 function addMarkersAndRoads(m) {
-  // User dot
-  m.addSource('user-pos', {
-    type: 'geojson',
-    data: { type: 'Point', coordinates: [userLng, userLat] }
-  });
-  m.addLayer({
-    id: 'user-glow', type: 'circle', source: 'user-pos',
-    paint: { 'circle-radius': 16, 'circle-color': '#d4a054', 'circle-opacity': 0.15, 'circle-blur': 1 }
-  });
-  m.addLayer({
-    id: 'user-dot', type: 'circle', source: 'user-pos',
-    paint: { 'circle-radius': 6, 'circle-color': '#d4a054', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 }
-  });
-
-  // Dest dot
-  const destData = destLat !== null
-    ? { type: 'Point', coordinates: [destLng, destLat] }
-    : { type: 'FeatureCollection', features: [] };
-  m.addSource('dest-pos', { type: 'geojson', data: destData });
-  m.addLayer({
-    id: 'dest-glow', type: 'circle', source: 'dest-pos',
-    paint: { 'circle-radius': 14, 'circle-color': '#e05040', 'circle-opacity': 0.15, 'circle-blur': 1 }
-  });
-  m.addLayer({
-    id: 'dest-dot', type: 'circle', source: 'dest-pos',
-    paint: { 'circle-radius': 5, 'circle-color': '#e05040', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 }
-  });
-
-  // Simplify and add roads
-  simplifyMapInstance(m);
+  restoreMapLayers(m, true);
 }
 
 function endTrip() {
