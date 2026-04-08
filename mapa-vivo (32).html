@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Mapa Vivo</title>
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Instrument+Serif:ital@0;1&display=swap');
+
+  :root {
+    --bg: #0a0a0a;
+    --surface: rgba(10, 10, 10, 0.85);
+    --text: #e8e4df;
+    --text-dim: #6b6560;
+    --accent: #d4a054;
+    --border: #2a2a2a;
+  }
+  .light {
+    --bg: #f5f0ea;
+    --surface: rgba(245, 240, 234, 0.85);
+    --text: #1a1714;
+    --text-dim: #8a847c;
+    --accent: #b07e30;
+    --border: #c8c0b6;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  body {
+    font-family: 'DM Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    width: 100%;
+    height: 100dvh;
+    overflow: hidden;
+    position: fixed;
+  }
+
+  #map {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transition: none;
+  }
+
+  /* ── NAV DUAL CIRCLE LAYOUT ── */
+  #nav-circles {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: calc(env(safe-area-inset-top, 20px) + 50px) 24px calc(env(safe-area-inset-bottom, 20px) + 60px);
+    z-index: 400;
+    pointer-events: none;
+  }
+  .map-circle {
+    width: min(46vw, 38vh);
+    height: min(46vw, 38vh);
+    border-radius: 50%;
+    overflow: hidden;
+    border: 1.5px solid var(--border);
+    pointer-events: auto;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .map-circle-label {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 9px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    background: var(--surface);
+    padding: 3px 10px;
+    border-radius: 20px;
+    z-index: 10;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .map-circle .maplibregl-canvas-container,
+  .map-circle .maplibregl-canvas {
+    border-radius: 50%;
+  }
+  #map-overview, #map-local {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Hide MapLibre default controls */
+  .maplibregl-ctrl-attrib,
+  .maplibregl-ctrl-logo {
+    display: none !important;
+  }
+
+  /* ── NORTH INDICATOR ── */
+  #north-indicator {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 20px) + 16px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    padding: 8px 16px;
+    border-radius: 40px;
+    border: 1px solid var(--border);
+  }
+  .north-arrow {
+    width: 0; height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-bottom: 10px solid #e05040;
+  }
+  .north-label { font-size: 12px; color: var(--text-dim); letter-spacing: 1px; }
+  .heading-deg { font-size: 12px; color: var(--text); font-weight: 500; }
+
+  /* ── CONTROLS ── */
+  .controls-right {
+    position: fixed;
+    right: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: center;
+  }
+  .ctrl-btn {
+    width: 44px;
+    height: 44px;
+    background: var(--surface);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-family: 'DM Mono', monospace;
+    border-radius: 50%;
+  }
+  .ctrl-btn:active { background: var(--accent); color: var(--bg); }
+  .ctrl-btn.active { color: var(--accent); border-color: var(--accent); }
+
+  /* ── SEARCH ── */
+  #search-panel {
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom, 20px) + 16px);
+    left: 16px;
+    right: 16px;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column-reverse;
+  }
+  .search-bar {
+    display: flex;
+    align-items: center;
+    background: var(--surface);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 0 16px;
+    gap: 8px;
+  }
+  .search-bar input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    font-family: 'DM Mono', monospace;
+    font-size: 14px;
+    color: var(--text);
+    padding: 14px 0;
+  }
+  .search-bar input::placeholder { color: var(--text-dim); }
+  .search-clear {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px;
+  }
+  .search-results {
+    margin-bottom: 8px;
+    background: var(--surface);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .search-result {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.4;
+  }
+  .search-result:active { background: var(--border); }
+  .search-result .result-name {
+    color: var(--text);
+    font-size: 14px;
+    margin-bottom: 2px;
+  }
+
+  /* ── DEST BAR ── */
+  #dest-bar {
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom, 20px) + 16px);
+    left: 16px;
+    right: 16px;
+    z-index: 1000;
+  }
+  .dest-bar-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--accent);
+    border-radius: 16px;
+    padding: 14px 16px;
+  }
+  .dest-bar-name {
+    font-size: 14px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    margin-right: 12px;
+  }
+  .dest-bar-close {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px;
+  }
+
+  .btn-start {
+    width: 100%;
+    margin-top: 8px;
+    padding: 14px;
+    border-radius: 16px;
+    border: none;
+    font-family: 'DM Mono', monospace;
+    font-size: 14px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    background: var(--accent);
+    color: var(--bg);
+    font-weight: 500;
+  }
+  .btn-start:active { transform: scale(0.98); filter: brightness(0.9); }
+
+  #nav-bar {
+    position: fixed;
+    bottom: calc(env(safe-area-inset-bottom, 20px) + 16px);
+    left: 16px;
+    right: 16px;
+    z-index: 1000;
+  }
+  .nav-bar-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--accent);
+    border-radius: 16px;
+    padding: 14px 16px;
+  }
+
+  .hidden { display: none !important; }
+
+  /* ── CROSSHAIR ── */
+  .crosshair {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 600;
+  }
+  .crosshair::before,
+  .crosshair::after {
+    content: '';
+    position: absolute;
+    background: var(--accent);
+    opacity: 0.25;
+  }
+  .crosshair::before { width: 1px; height: 24px; left: 0; top: -12px; }
+  .crosshair::after { width: 24px; height: 1px; left: -12px; top: 0; }
+
+  /* ── PERMISSION ── */
+  #permission-overlay {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 32px;
+    padding: 24px;
+    transition: opacity 0.5s ease;
+  }
+  #permission-overlay.dismissed { opacity: 0; pointer-events: none; }
+  #permission-overlay h1 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 44px;
+    font-weight: 400;
+  }
+  #permission-overlay p {
+    font-size: 13px;
+    color: var(--text-dim);
+    text-align: center;
+    line-height: 1.7;
+    max-width: 300px;
+  }
+  .btn {
+    padding: 16px 40px;
+    border-radius: 60px;
+    border: none;
+    font-family: 'DM Mono', monospace;
+    font-size: 14px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    background: var(--accent);
+    color: var(--bg);
+    font-weight: 500;
+  }
+  .btn:active { transform: scale(0.96); filter: brightness(0.9); }
+  #perm-status { font-size: 12px; color: var(--text-dim); min-height: 20px; }
+</style>
+</head>
+<body>
+
+<div id="permission-overlay">
+  <h1>Mapa Vivo</h1>
+  <p>Un mapa alineado con el mundo real.<br>Necesita brújula y ubicación.</p>
+  <button class="btn" onclick="init()">Activar</button>
+  <div id="perm-status"></div>
+</div>
+
+<div id="north-indicator" style="display:none;">
+  <div class="north-arrow" id="north-arrow"></div>
+  <span class="heading-deg" id="heading-display">0°</span>
+  <span class="north-label">N</span>
+</div>
+
+<div class="crosshair" id="crosshair-main"></div>
+
+<div id="map"></div>
+
+<div id="nav-circles" style="display:none;">
+  <div class="map-circle" id="circle-overview">
+    <div id="map-overview"></div>
+    <div class="map-circle-label">vista general</div>
+  </div>
+  <div class="map-circle" id="circle-local">
+    <div id="map-local"></div>
+    <div class="map-circle-label">zona local</div>
+  </div>
+</div>
+
+<div class="controls-right" style="display:none;" id="controls">
+  <button class="ctrl-btn active" id="recenter-btn" onclick="toggleFollow()">◎</button>
+  <button class="ctrl-btn" id="theme-btn" onclick="toggleTheme()">☀︎</button>
+</div>
+
+<div id="search-panel" style="display:none;">
+  <div class="search-bar">
+    <input type="text" id="dest-input" placeholder="¿A dónde vas?" autocomplete="off" enterkeyhint="search">
+    <button class="search-clear hidden" id="search-clear" onclick="clearDest()">✕</button>
+  </div>
+  <div class="search-results hidden" id="search-results"></div>
+</div>
+
+<div id="dest-bar" style="display:none;">
+  <div class="dest-bar-inner">
+    <span class="dest-bar-name" id="dest-bar-name">--</span>
+    <button class="dest-bar-close" onclick="clearDest()">✕</button>
+  </div>
+  <button class="btn-start" id="btn-start" onclick="startTrip()">Comenzar viaje</button>
+</div>
+
+<div id="nav-bar" style="display:none;">
+  <div class="nav-bar-inner">
+    <span class="dest-bar-name" id="nav-dest-name">--</span>
+    <button class="dest-bar-close" onclick="endTrip()">✕</button>
+  </div>
+</div>
+
+<script>
+let map;
+let mapOverview = null;
+let mapLocal = null;
+let heading = 0;
+let smoothHeading = 0;
+let userLat = null, userLng = null;
+let destLat = null, destLng = null;
+let followMode = 'user'; // 'user' | 'midpoint' | 'free'
+let midpointZoom = null;
+let searchTimeout = null;
+let isLight = false;
+
+const DARK_STYLE = 'https://tiles.openfreemap.org/styles/dark';
+const LIGHT_STYLE = 'https://tiles.openfreemap.org/styles/positron';
+
+// ═══════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════
+async function init() {
+  const status = document.getElementById('perm-status');
+
+  // Compass first — needs user gesture
+  status.textContent = 'Solicitando brújula...';
+  try {
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const perm = await DeviceOrientationEvent.requestPermission();
+      if (perm !== 'granted') throw new Error('denied');
+    }
+  } catch (e) {
+    status.textContent = 'Brújula denegada. Toca Permitir cuando Safari pregunte.';
+    return;
+  }
+
+  // GPS
+  status.textContent = 'Solicitando ubicación...';
+  try {
+    const pos = await new Promise((res, rej) =>
+      navigator.geolocation.getCurrentPosition(res, rej, {
+        enableHighAccuracy: true, timeout: 15000, maximumAge: 0
+      })
+    );
+    userLat = pos.coords.latitude;
+    userLng = pos.coords.longitude;
+  } catch (e) {
+    status.textContent = 'Ubicación denegada.';
+    return;
+  }
+
+  document.getElementById('permission-overlay').classList.add('dismissed');
+  document.getElementById('north-indicator').style.display = 'flex';
+  document.getElementById('controls').style.display = 'flex';
+  document.getElementById('search-panel').style.display = 'block';
+
+  setupMap();
+  startSensors();
+}
+
+let isInteracting = false;
+let isAnimating = false;
+
+// ═══════════════════════════════════════════
+//  MAP
+// ═══════════════════════════════════════════
+function setupMap() {
+  map = new maplibregl.Map({
+    container: 'map',
+    style: DARK_STYLE,
+    center: [userLng, userLat],
+    zoom: 16,
+    bearing: 0,
+    pitch: 0,
+    attributionControl: false,
+    dragRotate: false,
+    touchZoomRotate: true,
+    touchPitch: false
+  });
+
+  map.touchZoomRotate.disableRotation();
+
+  map.on('load', () => {
+    map.addSource('user-pos', {
+      type: 'geojson',
+      data: { type: 'Point', coordinates: [userLng, userLat] }
+    });
+    map.addLayer({
+      id: 'user-glow',
+      type: 'circle',
+      source: 'user-pos',
+      paint: {
+        'circle-radius': 20,
+        'circle-color': '#d4a054',
+        'circle-opacity': 0.15,
+        'circle-blur': 1
+      }
+    });
+    map.addLayer({
+      id: 'user-dot',
+      type: 'circle',
+      source: 'user-pos',
+      paint: {
+        'circle-radius': 7,
+        'circle-color': '#d4a054',
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2.5
+      }
+    });
+
+    // Destination source (empty until selected)
+    map.addSource('dest-pos', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+    map.addLayer({
+      id: 'dest-glow',
+      type: 'circle',
+      source: 'dest-pos',
+      paint: {
+        'circle-radius': 18,
+        'circle-color': '#e05040',
+        'circle-opacity': 0.15,
+        'circle-blur': 1
+      }
+    });
+    map.addLayer({
+      id: 'dest-dot',
+      type: 'circle',
+      source: 'dest-pos',
+      paint: {
+        'circle-radius': 6,
+        'circle-color': '#e05040',
+        'circle-stroke-color': '#ffffff',
+        'circle-stroke-width': 2.5
+      }
+    });
+  });
+
+  // Track user interaction to avoid fighting gestures
+  const mapEl = map.getContainer();
+  mapEl.addEventListener('touchstart', () => { isInteracting = true; }, { passive: true });
+  mapEl.addEventListener('touchend', () => {
+    setTimeout(() => { isInteracting = false; }, 100);
+  }, { passive: true });
+
+  map.on('dragstart', () => {
+    if (followMode !== 'free') {
+      followMode = 'free';
+      document.getElementById('recenter-btn').classList.remove('active');
+    }
+  });
+}
+
+// ═══════════════════════════════════════════
+//  SENSORS
+// ═══════════════════════════════════════════
+function startSensors() {
+  navigator.geolocation.watchPosition(
+    pos => {
+      userLat = pos.coords.latitude;
+      userLng = pos.coords.longitude;
+
+      const src = map.getSource('user-pos');
+      if (src) src.setData({ type: 'Point', coordinates: [userLng, userLat] });
+
+      // Update nav maps if active
+      if (isNavigating) {
+        if (mapOverview) {
+          const oSrc = mapOverview.getSource('user-pos');
+          if (oSrc) oSrc.setData({ type: 'Point', coordinates: [userLng, userLat] });
+          // Recenter overview on midpoint
+          if (destLat !== null) {
+            mapOverview.setCenter([(userLng + destLng) / 2, (userLat + destLat) / 2]);
+          }
+        }
+        if (mapLocal) {
+          const lSrc = mapLocal.getSource('user-pos');
+          if (lSrc) lSrc.setData({ type: 'Point', coordinates: [userLng, userLat] });
+          mapLocal.setCenter([userLng, userLat]);
+        }
+      }
+
+      // Silently recenter without animation (don't interrupt gestures)
+      if (!isInteracting && !isAnimating) {
+        if (followMode === 'user') {
+          map.setCenter([userLng, userLat]);
+        } else if (followMode === 'midpoint' && destLat !== null) {
+          map.setCenter([(userLng + destLng) / 2, (userLat + destLat) / 2]);
+        }
+      }
+    },
+    err => {},
+    { enableHighAccuracy: true, maximumAge: 2000 }
+  );
+
+  window.addEventListener('deviceorientation', e => {
+    if (e.webkitCompassHeading !== undefined) {
+      heading = e.webkitCompassHeading;
+    } else if (e.alpha !== null) {
+      heading = 360 - e.alpha;
+    }
+  }, true);
+
+  const arrow = document.getElementById('north-arrow');
+
+  function tick() {
+    let diff = heading - smoothHeading;
+    while (diff > 180) diff -= 360;
+    while (diff < -180) diff += 360;
+    smoothHeading += diff * 0.12;
+    smoothHeading = ((smoothHeading % 360) + 360) % 360;
+
+    // Set bearing directly on transform - doesn't interrupt gestures
+    if (map && !isNavigating) {
+      map.transform.bearing = smoothHeading;
+      map.triggerRepaint();
+    }
+    if (mapOverview) {
+      mapOverview.transform.bearing = smoothHeading;
+      mapOverview.triggerRepaint();
+    }
+    if (mapLocal) {
+      mapLocal.transform.bearing = smoothHeading;
+      mapLocal.triggerRepaint();
+    }
+
+    if (arrow) arrow.style.transform = `rotate(${-smoothHeading}deg)`;
+    document.getElementById('heading-display').textContent = `${Math.round(heading)}°`;
+
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+// ═══════════════════════════════════════════
+//  FOLLOW / CENTER
+// ═══════════════════════════════════════════
+function toggleFollow() {
+  if (followMode === 'free') {
+    followMode = destLat !== null ? 'midpoint' : 'user';
+    midpointZoom = null;
+  } else {
+    followMode = 'free';
+  }
+  document.getElementById('recenter-btn').classList.toggle('active', followMode !== 'free');
+  updateMapCenter();
+}
+
+function updateMapCenter() {
+  if (followMode === 'user' && userLat !== null) {
+    isAnimating = true;
+    map.once('moveend', () => { isAnimating = false; });
+    map.flyTo({ center: [userLng, userLat], zoom: 16, speed: 1.5 });
+  } else if (followMode === 'midpoint' && userLat !== null && destLat !== null) {
+    const midLat = (userLat + destLat) / 2;
+    const midLng = (userLng + destLng) / 2;
+
+    if (midpointZoom === null) {
+      const R = 6371000;
+      const toRad = d => d * Math.PI / 180;
+      const dLat = toRad(destLat - userLat);
+      const dLon = toRad(destLng - userLng);
+      const a = Math.sin(dLat/2)**2 + Math.cos(toRad(userLat)) * Math.cos(toRad(destLat)) * Math.sin(dLon/2)**2;
+      const totalDist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      const radiusMeters = totalDist / 2;
+
+      const screenMin = Math.min(window.innerWidth, window.innerHeight);
+      const safePixels = screenMin / 2 * 0.8;
+
+      const metersPerPx = z => 40075017 * Math.cos(midLat * Math.PI / 180) / (512 * Math.pow(2, z));
+      let z = 18;
+      while (z > 1 && radiusMeters / metersPerPx(z) > safePixels) {
+        z -= 0.5;
+      }
+      midpointZoom = z;
+    }
+
+    isAnimating = true;
+    map.once('moveend', () => { isAnimating = false; });
+    map.flyTo({ center: [midLng, midLat], zoom: midpointZoom, speed: 1.2 });
+  }
+}
+
+// ═══════════════════════════════════════════
+//  SEARCH / DESTINATION
+// ═══════════════════════════════════════════
+const destInput = document.getElementById('dest-input');
+const searchResults = document.getElementById('search-results');
+const searchClear = document.getElementById('search-clear');
+
+destInput.addEventListener('input', () => {
+  clearTimeout(searchTimeout);
+  const q = destInput.value.trim();
+  if (q.length < 3) {
+    searchResults.classList.add('hidden');
+    searchClear.classList.toggle('hidden', q.length === 0);
+    return;
+  }
+  searchClear.classList.remove('hidden');
+  searchTimeout = setTimeout(() => geocode(q), 500);
+});
+
+async function geocode(query) {
+  try {
+    let url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&q=${encodeURIComponent(query)}`;
+    if (userLat && userLng) {
+      url += `&viewbox=${userLng-0.5},${userLat+0.5},${userLng+0.5},${userLat-0.5}&bounded=0`;
+    }
+    const res = await fetch(url, { headers: { 'Accept-Language': 'es' } });
+    const data = await res.json();
+
+    if (data.length === 0) {
+      searchResults.innerHTML = '<div class="search-result"><span class="result-name">Sin resultados</span></div>';
+      searchResults.classList.remove('hidden');
+      return;
+    }
+
+    searchResults.innerHTML = data.map(r => `
+      <div class="search-result" onclick="selectDest(${r.lat}, ${r.lon}, '${r.display_name.replace(/'/g, "\\'")}')">
+        <div class="result-name">${r.display_name.split(',').slice(0,2).join(', ')}</div>
+        <div>${r.display_name.split(',').slice(2,4).join(', ')}</div>
+      </div>
+    `).join('');
+    searchResults.classList.remove('hidden');
+  } catch (e) {
+    searchResults.innerHTML = '<div class="search-result"><span class="result-name">Error de conexión</span></div>';
+    searchResults.classList.remove('hidden');
+  }
+}
+
+function selectDest(lat, lng, name) {
+  destLat = parseFloat(lat);
+  destLng = parseFloat(lng);
+  const destName = name.split(',').slice(0,2).join(', ');
+
+  document.getElementById('search-panel').style.display = 'none';
+  document.getElementById('dest-bar').style.display = 'block';
+  document.getElementById('dest-bar-name').textContent = destName;
+  searchResults.classList.add('hidden');
+  destInput.value = '';
+  destInput.blur();
+
+  // Update dest layer
+  const src = map.getSource('dest-pos');
+  if (src) src.setData({ type: 'Point', coordinates: [destLng, destLat] });
+
+  followMode = 'midpoint';
+  midpointZoom = null;
+  document.getElementById('recenter-btn').classList.add('active');
+  updateMapCenter();
+}
+
+function clearDest() {
+  // Clear dest layer
+  const src = map.getSource('dest-pos');
+  if (src) src.setData({ type: 'FeatureCollection', features: [] });
+
+  destLat = null;
+  destLng = null;
+  midpointZoom = null;
+
+  document.getElementById('search-panel').style.display = 'block';
+  document.getElementById('dest-bar').style.display = 'none';
+  destInput.value = '';
+  searchResults.classList.add('hidden');
+  searchClear.classList.add('hidden');
+
+  followMode = 'user';
+  document.getElementById('recenter-btn').classList.add('active');
+  if (userLat !== null) {
+    isAnimating = true;
+    map.once('moveend', () => { isAnimating = false; });
+    map.flyTo({ center: [userLng, userLat], zoom: 16, speed: 1.5 });
+  }
+}
+
+// ═══════════════════════════════════════════
+//  THEME
+// ═══════════════════════════════════════════
+function toggleTheme() {
+  isLight = !isLight;
+  document.body.classList.toggle('light', isLight);
+  document.getElementById('theme-btn').textContent = isLight ? '☾' : '☀︎';
+
+  const center = map.getCenter();
+  const zoom = map.getZoom();
+  const bearing = map.getBearing();
+  const wasNavigating = isNavigating;
+
+  map.setStyle(isLight ? LIGHT_STYLE : DARK_STYLE);
+
+  map.once('idle', () => {
+    map.jumpTo({ center, zoom, bearing });
+
+    try {
+      if (!map.getSource('user-pos')) {
+        map.addSource('user-pos', {
+          type: 'geojson',
+          data: { type: 'Point', coordinates: [userLng, userLat] }
+        });
+      }
+      if (!map.getLayer('user-glow')) {
+        map.addLayer({
+          id: 'user-glow', type: 'circle', source: 'user-pos',
+          paint: { 'circle-radius': 20, 'circle-color': '#d4a054', 'circle-opacity': 0.15, 'circle-blur': 1 }
+        });
+      }
+      if (!map.getLayer('user-dot')) {
+        map.addLayer({
+          id: 'user-dot', type: 'circle', source: 'user-pos',
+          paint: { 'circle-radius': 7, 'circle-color': '#d4a054', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2.5 }
+        });
+      }
+
+      const destData = destLat !== null
+        ? { type: 'Point', coordinates: [destLng, destLat] }
+        : { type: 'FeatureCollection', features: [] };
+      if (!map.getSource('dest-pos')) {
+        map.addSource('dest-pos', { type: 'geojson', data: destData });
+      } else {
+        map.getSource('dest-pos').setData(destData);
+      }
+      if (!map.getLayer('dest-glow')) {
+        map.addLayer({
+          id: 'dest-glow', type: 'circle', source: 'dest-pos',
+          paint: { 'circle-radius': 18, 'circle-color': '#e05040', 'circle-opacity': 0.15, 'circle-blur': 1 }
+        });
+      }
+      if (!map.getLayer('dest-dot')) {
+        map.addLayer({
+          id: 'dest-dot', type: 'circle', source: 'dest-pos',
+          paint: { 'circle-radius': 6, 'circle-color': '#e05040', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2.5 }
+        });
+      }
+    } catch(e) {}
+  });
+
+  // If navigating, recreate nav maps with new style
+  if (wasNavigating && destLat !== null) {
+    if (mapOverview) { mapOverview.remove(); mapOverview = null; }
+    if (mapLocal) { mapLocal.remove(); mapLocal = null; }
+    // Small delay to let containers clear
+    setTimeout(() => startTrip(), 300);
+  }
+}
+
+// ═══════════════════════════════════════════
+//  NAVIGATION MODE
+// ═══════════════════════════════════════════
+let isNavigating = false;
+
+function startTrip() {
+  isNavigating = true;
+
+  // Switch UI
+  document.getElementById('dest-bar').style.display = 'none';
+  document.getElementById('nav-bar').style.display = 'block';
+  document.getElementById('nav-dest-name').textContent =
+    document.getElementById('dest-bar-name').textContent;
+
+  // Hide main map, show circles
+  document.getElementById('map').style.display = 'none';
+  document.getElementById('crosshair-main').style.display = 'none';
+  document.getElementById('nav-circles').style.display = 'flex';
+
+  // Calculate overview zoom
+  const midLat = (userLat + destLat) / 2;
+  const midLng = (userLng + destLng) / 2;
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(destLat - userLat);
+  const dLon = toRad(destLng - userLng);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toRad(userLat)) * Math.cos(toRad(destLat)) * Math.sin(dLon/2)**2;
+  const totalDist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const radiusMeters = totalDist / 2;
+  // Fit in circle diameter (use circle element width)
+  const circleEl = document.getElementById('circle-overview');
+  const circlePx = circleEl.offsetWidth;
+  const safePx = circlePx / 2 * 0.75;
+  const metersPerPx = z => 40075017 * Math.cos(midLat * Math.PI / 180) / (512 * Math.pow(2, z));
+  let overviewZoom = 18;
+  while (overviewZoom > 1 && radiusMeters / metersPerPx(overviewZoom) > safePx) {
+    overviewZoom -= 0.5;
+  }
+
+  const currentStyle = isLight ? LIGHT_STYLE : DARK_STYLE;
+
+  // Create overview map
+  mapOverview = new maplibregl.Map({
+    container: 'map-overview',
+    style: currentStyle,
+    center: [midLng, midLat],
+    zoom: overviewZoom,
+    bearing: smoothHeading,
+    attributionControl: false,
+    dragRotate: false,
+    touchZoomRotate: false,
+    dragPan: false,
+    interactive: false
+  });
+  mapOverview.on('load', () => addMarkersAndRoads(mapOverview));
+
+  // Create local map
+  mapLocal = new maplibregl.Map({
+    container: 'map-local',
+    style: currentStyle,
+    center: [userLng, userLat],
+    zoom: 15,
+    bearing: smoothHeading,
+    attributionControl: false,
+    dragRotate: false,
+    touchZoomRotate: false,
+    dragPan: false,
+    interactive: false
+  });
+  mapLocal.on('load', () => addMarkersAndRoads(mapLocal));
+
+  followMode = 'user';
+  document.getElementById('recenter-btn').classList.add('active');
+}
+
+function addMarkersAndRoads(m) {
+  // User dot
+  m.addSource('user-pos', {
+    type: 'geojson',
+    data: { type: 'Point', coordinates: [userLng, userLat] }
+  });
+  m.addLayer({
+    id: 'user-glow', type: 'circle', source: 'user-pos',
+    paint: { 'circle-radius': 16, 'circle-color': '#d4a054', 'circle-opacity': 0.15, 'circle-blur': 1 }
+  });
+  m.addLayer({
+    id: 'user-dot', type: 'circle', source: 'user-pos',
+    paint: { 'circle-radius': 6, 'circle-color': '#d4a054', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 }
+  });
+
+  // Dest dot
+  const destData = destLat !== null
+    ? { type: 'Point', coordinates: [destLng, destLat] }
+    : { type: 'FeatureCollection', features: [] };
+  m.addSource('dest-pos', { type: 'geojson', data: destData });
+  m.addLayer({
+    id: 'dest-glow', type: 'circle', source: 'dest-pos',
+    paint: { 'circle-radius': 14, 'circle-color': '#e05040', 'circle-opacity': 0.15, 'circle-blur': 1 }
+  });
+  m.addLayer({
+    id: 'dest-dot', type: 'circle', source: 'dest-pos',
+    paint: { 'circle-radius': 5, 'circle-color': '#e05040', 'circle-stroke-color': '#fff', 'circle-stroke-width': 2 }
+  });
+
+  // Simplify and add roads
+  simplifyMapInstance(m);
+}
+
+function endTrip() {
+  isNavigating = false;
+
+  document.getElementById('nav-bar').style.display = 'none';
+  document.getElementById('nav-circles').style.display = 'none';
+  document.getElementById('map').style.display = 'block';
+  document.getElementById('crosshair-main').style.display = 'block';
+
+  if (mapOverview) { mapOverview.remove(); mapOverview = null; }
+  if (mapLocal) { mapLocal.remove(); mapLocal = null; }
+
+  clearDest();
+}
+
+// Green palette: darker = more capacity, lighter = less
+const ROAD_STYLE = {
+  motorway:  { width: 5 },
+  trunk:     { width: 4 },
+  primary:   { width: 3 },
+  secondary: { width: 2.5 },
+  tertiary:  { width: 1.5 },
+  minor:     { width: 1 },
+  service:   { width: 0.5 }
+};
+const ROAD_COLOR = '#4a9e5f';
+const MAJOR_CLASSES = Object.keys(ROAD_STYLE);
+
+function simplifyMapInstance(m) {
+  // Find the vector tile source
+  let vectorSourceId = null;
+  const layers = m.getStyle().layers;
+
+  for (const layer of layers) {
+    if ((layer['source-layer'] || '') === 'transportation' && layer.source) {
+      vectorSourceId = layer.source;
+      break;
+    }
+  }
+
+  // Hide non-essential layers
+  for (const layer of layers) {
+    const id = layer.id;
+    const srcLayer = layer['source-layer'] || '';
+    const type = layer.type;
+
+    if (id.startsWith('user-') || id.startsWith('dest-') || id.startsWith('nav-road-')) continue;
+    if (type === 'background' || type === 'raster' || type === 'hillshade') continue;
+
+    if (!shouldKeepLayer(layer, srcLayer)) {
+      try { m.setLayoutProperty(id, 'visibility', 'none'); } catch (e) {}
+    }
+  }
+
+  // Add custom road layers
+  if (vectorSourceId) {
+    const beforeLayer = m.getLayer('user-glow') ? 'user-glow' : undefined;
+    const classes = [...MAJOR_CLASSES].reverse();
+    for (const cls of classes) {
+      const layerId = `nav-road-${cls}`;
+      if (m.getLayer(layerId)) continue;
+
+      const style = ROAD_STYLE[cls];
+      m.addLayer({
+        id: layerId,
+        type: 'line',
+        source: vectorSourceId,
+        'source-layer': 'transportation',
+        filter: ['==', ['get', 'class'], cls],
+        paint: {
+          'line-color': ROAD_COLOR,
+          'line-width': style.width,
+          'line-opacity': 1
+        },
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round'
+        }
+      }, beforeLayer);
+    }
+  }
+}
+
+function shouldKeepLayer(layer, srcLayer) {
+  const id = layer.id.toLowerCase();
+  const type = layer.type;
+
+  // Water
+  if (srcLayer === 'water' || srcLayer === 'waterway' || id.includes('water')) return true;
+
+  // Land context
+  if (srcLayer === 'landcover' || srcLayer === 'landuse') return true;
+
+  // Place labels
+  if (srcLayer === 'place' || id.includes('place_')) return true;
+
+  // Boundary
+  if (srcLayer === 'boundary') return true;
+
+  // Layers without source-layer (fills, backgrounds)
+  if (!srcLayer && type !== 'symbol') return true;
+
+  // Hide everything else
+  return false;
+}
+</script>
+</body>
+</html>
