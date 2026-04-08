@@ -892,7 +892,7 @@ function clearDest() {
 // ═══════════════════════════════════════════
 //  THEME
 // ═══════════════════════════════════════════
-function restoreMapLayers(m, isNavMap) {
+function restoreMapLayers(m, isNavMap, isOverview) {
   try {
     if (!m.getSource('user-pos')) {
       m.addSource('user-pos', {
@@ -939,18 +939,18 @@ function restoreMapLayers(m, isNavMap) {
       });
     }
 
-    if (isNavMap) simplifyMapInstance(m);
+    if (isNavMap) simplifyMapInstance(m, isOverview);
   } catch(e) {}
 }
 
-function applyStyleToMap(m, newStyle, isNavMap) {
+function applyStyleToMap(m, newStyle, isNavMap, isOverview) {
   const center = m.getCenter();
   const zoom = m.getZoom();
   const bearing = m.getBearing();
   m.setStyle(newStyle);
   m.once('idle', () => {
     m.jumpTo({ center, zoom, bearing });
-    restoreMapLayers(m, isNavMap);
+    restoreMapLayers(m, isNavMap, isOverview);
   });
 }
 
@@ -960,9 +960,9 @@ function toggleTheme() {
   document.getElementById('theme-btn').textContent = isLight ? '☾' : '☀︎';
 
   const newStyle = isLight ? LIGHT_STYLE : DARK_STYLE;
-  applyStyleToMap(map, newStyle, false);
-  if (mapOverview) applyStyleToMap(mapOverview, newStyle, true);
-  if (mapLocal) applyStyleToMap(mapLocal, newStyle, true);
+  applyStyleToMap(map, newStyle, false, false);
+  if (mapOverview) applyStyleToMap(mapOverview, newStyle, true, true);
+  if (mapLocal) applyStyleToMap(mapLocal, newStyle, true, false);
 }
 
 // ═══════════════════════════════════════════
@@ -1061,7 +1061,7 @@ function startTrip() {
     dragPan: false,
     interactive: false
   });
-  mapOverview.on('load', () => addMarkersAndRoads(mapOverview));
+  mapOverview.on('load', () => addMarkersAndRoads(mapOverview, true));
 
   // Create local map
   mapLocal = new maplibregl.Map({
@@ -1076,13 +1076,13 @@ function startTrip() {
     dragPan: false,
     interactive: false
   });
-  mapLocal.on('load', () => addMarkersAndRoads(mapLocal));
+  mapLocal.on('load', () => addMarkersAndRoads(mapLocal, false));
 
   followMode = 'user';
 }
 
-function addMarkersAndRoads(m) {
-  restoreMapLayers(m, true);
+function addMarkersAndRoads(m, isOverview) {
+  restoreMapLayers(m, true, isOverview);
 }
 
 function endTrip() {
@@ -1115,7 +1115,9 @@ const ROAD_STYLE = {
 const ROAD_COLOR = '#4a9e5f';
 const MAJOR_CLASSES = Object.keys(ROAD_STYLE);
 
-function simplifyMapInstance(m) {
+const OVERVIEW_CLASSES = ['motorway', 'trunk', 'primary', 'secondary'];
+
+function simplifyMapInstance(m, isOverview) {
   // Find the vector tile source
   let vectorSourceId = null;
   const layers = m.getStyle().layers;
@@ -1163,7 +1165,8 @@ function simplifyMapInstance(m) {
         break;
       }
     }
-    const classes = [...MAJOR_CLASSES].reverse();
+    const roadClasses = isOverview ? OVERVIEW_CLASSES : MAJOR_CLASSES;
+    const classes = [...roadClasses].reverse();
     for (const cls of classes) {
       const layerId = `nav-road-${cls}`;
       if (m.getLayer(layerId)) continue;
