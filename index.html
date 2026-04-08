@@ -109,15 +109,14 @@
   }
   .direction-dot {
     position: absolute;
-    top: 2px;
+    top: 4px;
     left: 50%;
-    width: 14px;
-    height: 14px;
-    margin-left: -7px;
+    width: 3px;
+    height: 18px;
+    margin-left: -1.5px;
     background: #e05040;
-    border: 2.5px solid #fff;
-    border-radius: 50%;
-    box-shadow: 0 0 8px rgba(224, 80, 64, 0.6);
+    border-radius: 2px;
+    box-shadow: 0 0 6px rgba(224, 80, 64, 0.5);
   }
 
   /* Hide MapLibre default controls */
@@ -461,6 +460,7 @@ let isLight = false;
 
 const DARK_STYLE = 'https://tiles.openfreemap.org/styles/dark';
 const LIGHT_STYLE = 'https://tiles.openfreemap.org/styles/positron';
+const DEMO_MODE = new URLSearchParams(window.location.search).has('demo');
 
 // ═══════════════════════════════════════════
 //  INIT
@@ -468,32 +468,38 @@ const LIGHT_STYLE = 'https://tiles.openfreemap.org/styles/positron';
 async function init() {
   const status = document.getElementById('perm-status');
 
-  // Compass first — needs user gesture
-  status.textContent = 'Solicitando brújula...';
-  try {
-    if (typeof DeviceOrientationEvent !== 'undefined' &&
-        typeof DeviceOrientationEvent.requestPermission === 'function') {
-      const perm = await DeviceOrientationEvent.requestPermission();
-      if (perm !== 'granted') throw new Error('denied');
+  if (DEMO_MODE) {
+    // Demo mode: skip permissions, use fixed coordinates (San José, Costa Rica)
+    userLat = 9.9281;
+    userLng = -84.0907;
+  } else {
+    // Compass first — needs user gesture
+    status.textContent = 'Solicitando brújula...';
+    try {
+      if (typeof DeviceOrientationEvent !== 'undefined' &&
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        const perm = await DeviceOrientationEvent.requestPermission();
+        if (perm !== 'granted') throw new Error('denied');
+      }
+    } catch (e) {
+      status.textContent = 'Brújula denegada. Toca Permitir cuando Safari pregunte.';
+      return;
     }
-  } catch (e) {
-    status.textContent = 'Brújula denegada. Toca Permitir cuando Safari pregunte.';
-    return;
-  }
 
-  // GPS
-  status.textContent = 'Solicitando ubicación...';
-  try {
-    const pos = await new Promise((res, rej) =>
-      navigator.geolocation.getCurrentPosition(res, rej, {
-        enableHighAccuracy: true, timeout: 15000, maximumAge: 0
-      })
-    );
-    userLat = pos.coords.latitude;
-    userLng = pos.coords.longitude;
-  } catch (e) {
-    status.textContent = 'Ubicación denegada.';
-    return;
+    // GPS
+    status.textContent = 'Solicitando ubicación...';
+    try {
+      const pos = await new Promise((res, rej) =>
+        navigator.geolocation.getCurrentPosition(res, rej, {
+          enableHighAccuracy: true, timeout: 15000, maximumAge: 0
+        })
+      );
+      userLat = pos.coords.latitude;
+      userLng = pos.coords.longitude;
+    } catch (e) {
+      status.textContent = 'Ubicación denegada.';
+      return;
+    }
   }
 
   document.getElementById('permission-overlay').classList.add('dismissed');
@@ -616,9 +622,15 @@ function startSensors() {
         if (mapOverview) {
           const oSrc = mapOverview.getSource('user-pos');
           if (oSrc) oSrc.setData({ type: 'Point', coordinates: [userLng, userLat] });
-          // Recenter overview on midpoint
+          // Recenter overview on midpoint with recalculated zoom
           if (destLat !== null) {
-            mapOverview.setCenter([(userLng + destLng) / 2, (userLat + destLat) / 2]);
+            const midLat = (userLat + destLat) / 2;
+            const midLng = (userLng + destLng) / 2;
+            mapOverview.setCenter([midLng, midLat]);
+            const newZoom = calcOverviewZoom(midLat);
+            if (Math.abs(newZoom - mapOverview.getZoom()) > 0.3) {
+              mapOverview.setZoom(newZoom);
+            }
           }
         }
         if (mapLocal) {
@@ -626,6 +638,7 @@ function startSensors() {
           if (lSrc) lSrc.setData({ type: 'Point', coordinates: [userLng, userLat] });
           mapLocal.setCenter([userLng, userLat]);
         }
+        updateCircleLayout();
       }
 
       // Silently recenter without animation (don't interrupt gestures)
@@ -698,7 +711,7 @@ function calcBearing(lat1, lon1, lat2, lon2) {
 
 function updateDirectionIndicator() {
   const indicator = document.getElementById('dir-indicator');
-  if (!indicator || !mapLocal || !destLat || !userLat) {
+  if (!indicator || !mapLocal || !destLat || !userLat || !mapLocal.getLayer('dest-dot')) {
     if (indicator) indicator.style.display = 'none';
     return;
   }
@@ -717,20 +730,20 @@ function updateDirectionIndicator() {
     if (distPx < radius * 0.9) {
       // Dest is visible inside the circle — hide indicator, show map dot
       indicator.style.display = 'none';
-      try {
+      if (mapLocal.getLayer('dest-dot')) {
         mapLocal.setLayoutProperty('dest-dot', 'visibility', 'visible');
         mapLocal.setLayoutProperty('dest-glow', 'visibility', 'visible');
-      } catch(e) {}
+      }
       return;
     }
   } catch(e) {}
 
   // Dest is outside the circle — show indicator, hide map dot
   indicator.style.display = 'block';
-  try {
+  if (mapLocal.getLayer('dest-dot')) {
     mapLocal.setLayoutProperty('dest-dot', 'visibility', 'none');
     mapLocal.setLayoutProperty('dest-glow', 'visibility', 'none');
-  } catch(e) {}
+  }
 
   // Calculate angle: bearing to dest adjusted for map rotation
   const bearing = calcBearing(userLat, userLng, destLat, destLng);
@@ -950,25 +963,9 @@ function toggleTheme() {
 //  NAVIGATION MODE
 // ═══════════════════════════════════════════
 let isNavigating = false;
+let singleCircleMode = false;
 
-function startTrip() {
-  isNavigating = true;
-
-  // Switch UI
-  document.getElementById('dest-bar').style.display = 'none';
-  document.getElementById('nav-bar').style.display = 'block';
-  document.getElementById('nav-dest-name').textContent =
-    document.getElementById('dest-bar-name').textContent;
-
-  // Hide main map, show circles
-  document.getElementById('map').style.display = 'none';
-  document.getElementById('crosshair-main').style.display = 'none';
-  document.getElementById('north-indicator').style.display = 'none';
-  document.getElementById('nav-circles').style.display = 'flex';
-
-  // Calculate overview zoom
-  const midLat = (userLat + destLat) / 2;
-  const midLng = (userLng + destLng) / 2;
+function calcOverviewZoom(midLat) {
   const R = 6371000;
   const toRad = d => d * Math.PI / 180;
   const dLat = toRad(destLat - userLat);
@@ -976,15 +973,72 @@ function startTrip() {
   const a = Math.sin(dLat/2)**2 + Math.cos(toRad(userLat)) * Math.cos(toRad(destLat)) * Math.sin(dLon/2)**2;
   const totalDist = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
   const radiusMeters = totalDist / 2;
-  // Fit in circle diameter (use circle element width)
   const circleEl = document.getElementById('circle-overview');
-  const circlePx = circleEl.offsetWidth;
+  const circlePx = circleEl ? circleEl.offsetWidth : 200;
   const safePx = circlePx / 2 * 0.75;
   const metersPerPx = z => 40075017 * Math.cos(midLat * Math.PI / 180) / (512 * Math.pow(2, z));
-  let overviewZoom = 18;
-  while (overviewZoom > 1 && radiusMeters / metersPerPx(overviewZoom) > safePx) {
-    overviewZoom -= 0.5;
+  let z = 18;
+  while (z > 1 && radiusMeters / metersPerPx(z) > safePx) {
+    z -= 0.5;
   }
+  return z;
+}
+
+function updateCircleLayout() {
+  if (!mapLocal || !destLat || !userLat) return;
+
+  try {
+    const destPixel = mapLocal.project([destLng, destLat]);
+    const container = mapLocal.getContainer();
+    const cx = container.offsetWidth / 2;
+    const cy = container.offsetHeight / 2;
+    const dx = destPixel.x - cx;
+    const dy = destPixel.y - cy;
+    const distPx = Math.sqrt(dx * dx + dy * dy);
+    const radius = cx;
+    const destInLocal = distPx < radius * 0.9;
+
+    if (destInLocal && !singleCircleMode) {
+      singleCircleMode = true;
+      document.getElementById('circle-overview').style.display = 'none';
+      document.getElementById('circle-local').style.width = 'min(85vw, 85vh)';
+      document.getElementById('circle-local').style.height = 'min(85vw, 85vh)';
+      mapLocal.resize();
+    } else if (!destInLocal && singleCircleMode) {
+      singleCircleMode = false;
+      document.getElementById('circle-overview').style.display = '';
+      document.getElementById('circle-local').style.width = '';
+      document.getElementById('circle-local').style.height = '';
+      mapLocal.resize();
+    }
+  } catch(e) {}
+}
+
+function startTrip() {
+  isNavigating = true;
+  singleCircleMode = false;
+
+  // Switch UI
+  document.getElementById('dest-bar').style.display = 'none';
+  document.getElementById('nav-bar').style.display = 'block';
+  document.getElementById('nav-dest-name').textContent =
+    document.getElementById('dest-bar-name').textContent;
+
+  // Hide main map, show circles, hide recenter btn
+  document.getElementById('map').style.display = 'none';
+  document.getElementById('crosshair-main').style.display = 'none';
+  document.getElementById('north-indicator').style.display = 'none';
+  document.getElementById('nav-circles').style.display = 'flex';
+  document.getElementById('recenter-btn').style.display = 'none';
+
+  // Reset circle sizes
+  document.getElementById('circle-overview').style.display = '';
+  document.getElementById('circle-local').style.width = '';
+  document.getElementById('circle-local').style.height = '';
+
+  const midLat = (userLat + destLat) / 2;
+  const midLng = (userLng + destLng) / 2;
+  const overviewZoom = calcOverviewZoom(midLat);
 
   const currentStyle = isLight ? LIGHT_STYLE : DARK_STYLE;
 
@@ -1019,7 +1073,6 @@ function startTrip() {
   mapLocal.on('load', () => addMarkersAndRoads(mapLocal));
 
   followMode = 'user';
-  document.getElementById('recenter-btn').classList.add('active');
 }
 
 function addMarkersAndRoads(m) {
@@ -1057,12 +1110,14 @@ function addMarkersAndRoads(m) {
 
 function endTrip() {
   isNavigating = false;
+  singleCircleMode = false;
 
   document.getElementById('nav-bar').style.display = 'none';
   document.getElementById('nav-circles').style.display = 'none';
   document.getElementById('map').style.display = 'block';
   document.getElementById('crosshair-main').style.display = 'block';
   document.getElementById('north-indicator').style.display = 'flex';
+  document.getElementById('recenter-btn').style.display = '';
 
   if (mapOverview) { mapOverview.remove(); mapOverview = null; }
   if (mapLocal) { mapLocal.remove(); mapLocal = null; }
@@ -1109,9 +1164,15 @@ function simplifyMapInstance(m) {
     }
   }
 
-  // Add custom road layers
+  // Add custom road layers — insert below the first visible symbol layer so labels stay on top
   if (vectorSourceId) {
-    const beforeLayer = m.getLayer('user-glow') ? 'user-glow' : undefined;
+    let beforeLayer = undefined;
+    for (const layer of layers) {
+      if (layer.type === 'symbol' && shouldKeepLayer(layer, layer['source-layer'] || '')) {
+        beforeLayer = layer.id;
+        break;
+      }
+    }
     const classes = [...MAJOR_CLASSES].reverse();
     for (const cls of classes) {
       const layerId = `nav-road-${cls}`;
