@@ -125,31 +125,6 @@
     display: none !important;
   }
 
-  /* ── NORTH INDICATOR ── */
-  #north-indicator {
-    position: fixed;
-    top: calc(env(safe-area-inset-top, 20px) + 16px);
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 1000;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: var(--surface);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    padding: 8px 16px;
-    border-radius: 40px;
-    border: 1px solid var(--border);
-  }
-  .north-arrow {
-    width: 0; height: 0;
-    border-left: 5px solid transparent;
-    border-right: 5px solid transparent;
-    border-bottom: 10px solid #e05040;
-  }
-  .north-label { font-size: 12px; color: var(--text-dim); letter-spacing: 1px; }
-  .heading-deg { font-size: 12px; color: var(--text); font-weight: 500; }
 
   /* ── CONTROLS ── */
   .controls-right {
@@ -393,11 +368,6 @@
   <div id="perm-status"></div>
 </div>
 
-<div id="north-indicator" style="display:none;">
-  <div class="north-arrow" id="north-arrow"></div>
-  <span class="heading-deg" id="heading-display">0°</span>
-  <span class="north-label">N</span>
-</div>
 
 <div class="crosshair" id="crosshair-main"></div>
 
@@ -469,9 +439,9 @@ async function init() {
   const status = document.getElementById('perm-status');
 
   if (DEMO_MODE) {
-    // Demo mode: skip permissions, use fixed coordinates (San José, Costa Rica)
-    userLat = 9.9281;
-    userLng = -84.0907;
+    // Demo mode: skip permissions, use fixed coordinates (Santiago, Chile)
+    userLat = -33.4489;
+    userLng = -70.6693;
   } else {
     // Compass first — needs user gesture
     status.textContent = 'Solicitando brújula...';
@@ -503,7 +473,6 @@ async function init() {
   }
 
   document.getElementById('permission-overlay').classList.add('dismissed');
-  document.getElementById('north-indicator').style.display = 'flex';
   document.getElementById('controls').style.display = 'flex';
   document.getElementById('search-panel').style.display = 'block';
 
@@ -662,7 +631,6 @@ function startSensors() {
     }
   }, true);
 
-  const arrow = document.getElementById('north-arrow');
 
   function tick() {
     let diff = heading - smoothHeading;
@@ -688,8 +656,6 @@ function startSensors() {
       updateDirectionIndicator();
     }
 
-    if (arrow) arrow.style.transform = `rotate(${-smoothHeading}deg)`;
-    document.getElementById('heading-display').textContent = `${Math.round(heading)}°`;
 
     requestAnimationFrame(tick);
   }
@@ -940,6 +906,7 @@ function restoreMapLayers(m, isNavMap, isOverview) {
     }
 
     if (isNavMap) simplifyMapInstance(m, isOverview);
+    normalizeLabels(m);
   } catch(e) {}
 }
 
@@ -951,6 +918,7 @@ function applyStyleToMap(m, newStyle, isNavMap, isOverview) {
   m.once('idle', () => {
     m.jumpTo({ center, zoom, bearing });
     restoreMapLayers(m, isNavMap, isOverview);
+    normalizeLabels(m);
   });
 }
 
@@ -970,6 +938,25 @@ function toggleTheme() {
 // ═══════════════════════════════════════════
 let isNavigating = false;
 let singleCircleMode = false;
+
+function normalizeLabels(m) {
+  const layers = m.getStyle().layers;
+  for (const layer of layers) {
+    if (layer.type !== 'symbol') continue;
+    try {
+      // Ensure all symbol layers are visible at full zoom range
+      if (layer.maxzoom && layer.maxzoom < 20) {
+        m.setLayerZoomRange(layer.id, layer.minzoom || 0, 24);
+      }
+      // Fix colors per theme
+      if (!isLight) {
+        m.setPaintProperty(layer.id, 'text-color', '#c8c0b6');
+        m.setPaintProperty(layer.id, 'text-halo-color', 'rgba(0,0,0,0.7)');
+        m.setPaintProperty(layer.id, 'text-halo-width', 1.5);
+      }
+    } catch(e) {}
+  }
+}
 
 function calcOverviewZoom(midLat) {
   const R = 6371000;
@@ -1033,7 +1020,6 @@ function startTrip() {
   // Hide main map, show circles, hide recenter btn
   document.getElementById('map').style.display = 'none';
   document.getElementById('crosshair-main').style.display = 'none';
-  document.getElementById('north-indicator').style.display = 'none';
   document.getElementById('nav-circles').style.display = 'flex';
   document.getElementById('recenter-btn').style.display = 'none';
 
@@ -1093,7 +1079,6 @@ function endTrip() {
   document.getElementById('nav-circles').style.display = 'none';
   document.getElementById('map').style.display = 'block';
   document.getElementById('crosshair-main').style.display = 'block';
-  document.getElementById('north-indicator').style.display = 'flex';
   document.getElementById('recenter-btn').style.display = '';
 
   if (mapOverview) { mapOverview.remove(); mapOverview = null; }
@@ -1140,19 +1125,6 @@ function simplifyMapInstance(m, isOverview) {
 
     if (!shouldKeepLayer(layer, srcLayer)) {
       try { m.setLayoutProperty(id, 'visibility', 'none'); } catch (e) {}
-    } else if (type === 'symbol') {
-      // Fix label visibility: dark style has #000 labels, light style may have light labels
-      try {
-        if (!isLight) {
-          m.setPaintProperty(id, 'text-color', '#c8c0b6');
-          m.setPaintProperty(id, 'text-halo-color', 'rgba(0,0,0,0.7)');
-          m.setPaintProperty(id, 'text-halo-width', 1.5);
-        } else {
-          m.setPaintProperty(id, 'text-color', '#333');
-          m.setPaintProperty(id, 'text-halo-color', 'rgba(255,255,255,0.8)');
-          m.setPaintProperty(id, 'text-halo-width', 1.5);
-        }
-      } catch(e) {}
     }
   }
 
