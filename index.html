@@ -62,14 +62,21 @@
     pointer-events: none;
   }
   .map-circle {
-    width: min(80vw, 42vh);
-    height: min(80vw, 42vh);
     border-radius: 50%;
     overflow: hidden;
     border: 1.5px solid var(--border);
     pointer-events: auto;
     position: relative;
     flex-shrink: 0;
+    transition: width 0.3s ease-in-out, height 0.3s ease-in-out;
+  }
+  .map-circle.circle-big {
+    width: min(80vw, 55vh);
+    height: min(80vw, 55vh);
+  }
+  .map-circle.circle-small {
+    width: min(40vw, 22vh);
+    height: min(40vw, 22vh);
   }
   .map-circle-label {
     position: absolute;
@@ -374,13 +381,13 @@
 <div id="map"></div>
 
 <div id="nav-circles" style="display:none;">
-  <div class="map-circle" id="circle-overview">
+  <div class="map-circle circle-big" id="circle-overview" onclick="toggleCircleFocus('overview')">
     <div id="map-overview"></div>
-    <div class="map-circle-label">vista general</div>
+    <div class="map-circle-label">planificación</div>
   </div>
-  <div class="map-circle" id="circle-local">
+  <div class="map-circle circle-small" id="circle-local" onclick="toggleCircleFocus('local')">
     <div id="map-local"></div>
-    <div class="map-circle-label">zona local</div>
+    <div class="map-circle-label">navegación</div>
     <div class="direction-indicator" id="dir-indicator">
       <div class="direction-dot"></div>
     </div>
@@ -591,7 +598,7 @@ function startSensors() {
         if (mapOverview) {
           const oSrc = mapOverview.getSource('user-pos');
           if (oSrc) oSrc.setData({ type: 'Point', coordinates: [userLng, userLat] });
-          // Recenter overview on midpoint with recalculated zoom
+          // Recenter planning map on midpoint, recalc zoom
           if (destLat !== null) {
             const midLat = (userLat + destLat) / 2;
             const midLng = (userLng + destLng) / 2;
@@ -607,7 +614,6 @@ function startSensors() {
           if (lSrc) lSrc.setData({ type: 'Point', coordinates: [userLng, userLat] });
           mapLocal.setCenter([userLng, userLat]);
         }
-        updateCircleLayout();
       }
 
       // Silently recenter without animation (don't interrupt gestures)
@@ -644,11 +650,13 @@ function startSensors() {
       map.transform.bearing = smoothHeading;
       map.triggerRepaint();
     }
-    if (mapOverview) {
-      mapOverview.transform.bearing = smoothHeading;
+    if (mapOverview && destLat !== null && userLat !== null) {
+      // Planning circle: fixed bearing so dest is UP
+      mapOverview.transform.bearing = calcBearing(userLat, userLng, destLat, destLng);
       mapOverview.triggerRepaint();
     }
     if (mapLocal) {
+      // Navigation circle: gyroscope active
       mapLocal.transform.bearing = smoothHeading;
       mapLocal.triggerRepaint();
 
@@ -937,7 +945,7 @@ function toggleTheme() {
 //  NAVIGATION MODE
 // ═══════════════════════════════════════════
 let isNavigating = false;
-let singleCircleMode = false;
+let focusedCircle = 'overview'; // 'overview' | 'local'
 
 function normalizeLabels(m) {
   const layers = m.getStyle().layers;
@@ -977,39 +985,30 @@ function calcOverviewZoom(midLat) {
   return z;
 }
 
-function updateCircleLayout() {
-  if (!mapLocal || !destLat || !userLat) return;
+function toggleCircleFocus(which) {
+  if (focusedCircle === which) return;
+  focusedCircle = which;
+  const overviewEl = document.getElementById('circle-overview');
+  const localEl = document.getElementById('circle-local');
 
-  try {
-    const destPixel = mapLocal.project([destLng, destLat]);
-    const container = mapLocal.getContainer();
-    const cx = container.offsetWidth / 2;
-    const cy = container.offsetHeight / 2;
-    const dx = destPixel.x - cx;
-    const dy = destPixel.y - cy;
-    const distPx = Math.sqrt(dx * dx + dy * dy);
-    const radius = cx;
-    const destInLocal = distPx < radius * 0.9;
+  if (which === 'overview') {
+    overviewEl.classList.replace('circle-small', 'circle-big');
+    localEl.classList.replace('circle-big', 'circle-small');
+  } else {
+    localEl.classList.replace('circle-small', 'circle-big');
+    overviewEl.classList.replace('circle-big', 'circle-small');
+  }
 
-    if (destInLocal && !singleCircleMode) {
-      singleCircleMode = true;
-      document.getElementById('circle-overview').style.display = 'none';
-      document.getElementById('circle-local').style.width = 'min(85vw, 85vh)';
-      document.getElementById('circle-local').style.height = 'min(85vw, 85vh)';
-      mapLocal.resize();
-    } else if (!destInLocal && singleCircleMode) {
-      singleCircleMode = false;
-      document.getElementById('circle-overview').style.display = '';
-      document.getElementById('circle-local').style.width = '';
-      document.getElementById('circle-local').style.height = '';
-      mapLocal.resize();
-    }
-  } catch(e) {}
+  // Resize maps after transition
+  setTimeout(() => {
+    if (mapOverview) mapOverview.resize();
+    if (mapLocal) mapLocal.resize();
+  }, 320);
 }
 
 function startTrip() {
   isNavigating = true;
-  singleCircleMode = false;
+  focusedCircle = 'overview';
 
   // Switch UI
   document.getElementById('dest-bar').style.display = 'none';
@@ -1023,24 +1022,28 @@ function startTrip() {
   document.getElementById('nav-circles').style.display = 'flex';
   document.getElementById('recenter-btn').style.display = 'none';
 
-  // Reset circle sizes
-  document.getElementById('circle-overview').style.display = '';
-  document.getElementById('circle-local').style.width = '';
-  document.getElementById('circle-local').style.height = '';
+  // Set initial circle sizes: overview big, local small
+  const overviewEl = document.getElementById('circle-overview');
+  const localEl = document.getElementById('circle-local');
+  overviewEl.classList.add('circle-big');
+  overviewEl.classList.remove('circle-small');
+  localEl.classList.add('circle-small');
+  localEl.classList.remove('circle-big');
 
   const midLat = (userLat + destLat) / 2;
   const midLng = (userLng + destLng) / 2;
   const overviewZoom = calcOverviewZoom(midLat);
+  const planBearing = calcBearing(userLat, userLng, destLat, destLng);
 
   const currentStyle = isLight ? LIGHT_STYLE : DARK_STYLE;
 
-  // Create overview map
+  // Create planning map — bearing fixed: dest points up
   mapOverview = new maplibregl.Map({
     container: 'map-overview',
     style: currentStyle,
     center: [midLng, midLat],
     zoom: overviewZoom,
-    bearing: smoothHeading,
+    bearing: planBearing,
     attributionControl: false,
     dragRotate: false,
     touchZoomRotate: false,
@@ -1049,7 +1052,7 @@ function startTrip() {
   });
   mapOverview.on('load', () => addMarkersAndRoads(mapOverview, true));
 
-  // Create local map
+  // Create navigation map — gyroscope active
   mapLocal = new maplibregl.Map({
     container: 'map-local',
     style: currentStyle,
@@ -1073,7 +1076,6 @@ function addMarkersAndRoads(m, isOverview) {
 
 function endTrip() {
   isNavigating = false;
-  singleCircleMode = false;
 
   document.getElementById('nav-bar').style.display = 'none';
   document.getElementById('nav-circles').style.display = 'none';
